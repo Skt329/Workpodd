@@ -11,13 +11,28 @@ from app.database import AsyncSessionLocal
 from app.services.crm_service import CRMService
 from app.services.event_service import EventService
 from app.models.conversation import Conversation
-from langchain_core.messages import HumanMessage, SystemMessage
-from app.agent.prompts import SYSTEM_PROMPT
+from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
+from app.agent.prompts import build_system_prompt
 
 
 # In-memory conversation message history (per customer session)
 _conversation_histories: dict[str, list] = {}
 _conversation_ids: dict[str, str] = {}
+_customer_contexts: dict[str, str] = {}  # cached system prompts with customer context
+
+
+async def _build_customer_context(customer_id: str) -> str:
+    """Fetch customer profile + orders and build a context-injected system prompt."""
+    async with AsyncSessionLocal() as session:
+        crm = CRMService(session)
+        customer = await crm.lookup_customer(customer_id)
+        orders = await crm.get_customer_orders(customer_id)
+        refund_history = await crm.get_refund_history(customer_id, days=90)
+
+    if not customer:
+        return build_system_prompt(customer_id, None, [], [])
+
+    return build_system_prompt(customer_id, customer, orders or [], refund_history or [])
 
 
 async def chat_websocket_endpoint(websocket: WebSocket, customer_id: str):
@@ -41,6 +56,10 @@ async def chat_websocket_endpoint(websocket: WebSocket, customer_id: str):
         _conversation_histories[customer_id] = []
 
     conversation_id = _conversation_ids[customer_id]
+
+    # Build customer context (system prompt with profile + orders pre-loaded)
+    if customer_id not in _customer_contexts:
+        _customer_contexts[customer_id] = await _build_customer_context(customer_id)
 
     # Emit conversation start event to admin
     await manager.broadcast("admin", {
@@ -87,8 +106,9 @@ async def chat_websocket_endpoint(websocket: WebSocket, customer_id: str):
                 history = _conversation_histories.setdefault(customer_id, [])
                 history.append(HumanMessage(content=message_text))
 
-                # Build messages with system prompt
-                messages = [SystemMessage(content=SYSTEM_PROMPT)] + history
+                # Build messages with customer-specific system prompt
+                system_prompt = _customer_contexts.get(customer_id, "")
+                messages = [SystemMessage(content=system_prompt)] + history
 
                 # Event callback for streaming to admin dashboard
                 async def event_callback(event: dict):
@@ -106,7 +126,6 @@ async def chat_websocket_endpoint(websocket: WebSocket, customer_id: str):
                     response_text = result.get("response", "I'm sorry, I encountered an issue. Please try again.")
 
                     # Store assistant response in history
-                    from langchain_core.messages import AIMessage
                     history.append(AIMessage(content=response_text))
 
                     # Send agent response to customer
@@ -118,50 +137,45 @@ async def chat_websocket_endpoint(websocket: WebSocket, customer_id: str):
 
                     # Check for refund status in events
                     for event in result.get("events", []):
-                        output = event.get("output_data", {})
-                        if isinstance(output, dict):
-                            if "recommendation" in output:
-                                await manager.send_personal(websocket, {
-                                    "type": "refund_status",
-                                    "status": output["recommendation"],
-                                    "timestamp": datetime.utcnow().isoformat(),
-                                })
-                            elif output.get("success") and "refund_id" in output:
-                                await manager.send_personal(websocket, {
-                                    "type": "refund_status",
-                                    "status": output.get("status", "APPROVED"),
-                                    "refund_id": output.get("refund_id"),
-                                    "timestamp": datetime.utcnow().isoformat(),
-                                })
+                        if event.get("type") == "TOOL_CALL" and event.get("tool_name") in ("process_refund", "escalate_to_human"):
+                            status = "ESCALATED" if event["tool_name"] == "escalate_to_human" else "PROCESSED"
+                            await manager.send_personal(websocket, {
+                                "type": "refund_status",
+                                "status": status,
+                                "timestamp": datetime.utcnow().isoformat(),
+                            })
+
+                    # Emit agent response event to admin
+                    await manager.broadcast("admin", {
+                        "type": "AGENT_RESPONSE",
+                        "conversation_id": conversation_id,
+                        "customer_id": customer_id,
+                        "output_data": {"response": response_text[:300]},
+                        "step_index": len(history),
+                        "timestamp": datetime.utcnow().isoformat(),
+                    })
 
                 except Exception as e:
-                    error_msg = f"Agent error: {str(e)}"
+                    error_msg = f"I apologize, but I encountered a technical issue. Please try again in a moment."
+                    print(f"[ERROR] Agent error for {customer_id}: {e}")
+
                     await manager.send_personal(websocket, {
-                        "type": "error",
-                        "message": "I'm experiencing technical difficulties. Please try again in a moment.",
+                        "type": "agent_message",
+                        "message": error_msg,
                         "timestamp": datetime.utcnow().isoformat(),
                     })
+
                     # Emit error event to admin
                     await manager.broadcast("admin", {
-                        "type": "ERROR",
+                        "type": "AGENT_ERROR",
                         "conversation_id": conversation_id,
-                        "output_data": {"error": error_msg},
+                        "customer_id": customer_id,
+                        "output_data": {"error": str(e)[:500]},
                         "timestamp": datetime.utcnow().isoformat(),
                     })
 
-            elif msg_type == "reset_conversation":
-                # Clear conversation history for this customer
-                _conversation_histories[customer_id] = []
-                _conversation_ids[customer_id] = str(uuid.uuid4())
-                conversation_id = _conversation_ids[customer_id]
-                await manager.send_personal(websocket, {
-                    "type": "conversation_reset",
-                    "timestamp": datetime.utcnow().isoformat(),
-                })
-
     except WebSocketDisconnect:
-        await manager.disconnect(websocket, channel)
-        # Emit conversation end event to admin
+        manager.disconnect(websocket, channel)
         await manager.broadcast("admin", {
             "type": "CONVERSATION_END",
             "conversation_id": conversation_id,

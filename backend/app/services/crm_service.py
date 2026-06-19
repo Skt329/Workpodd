@@ -70,14 +70,14 @@ class CRMService:
         """Get order details by order ID or order number."""
         # Try by ID
         result = await self._session.execute(
-            select(Order).where(Order.id == order_id)
+            select(Order).options(selectinload(Order.product)).where(Order.id == order_id)
         )
         order = result.scalar_one_or_none()
 
         # Try by order number
         if not order:
             result = await self._session.execute(
-                select(Order).where(Order.order_number == order_id)
+                select(Order).options(selectinload(Order.product)).where(Order.order_number == order_id)
             )
             order = result.scalar_one_or_none()
 
@@ -87,6 +87,7 @@ class CRMService:
         """Get all orders for a customer."""
         result = await self._session.execute(
             select(Order)
+            .options(selectinload(Order.product))
             .where(Order.customer_id == customer_id)
             .order_by(Order.ordered_at.desc())
         )
