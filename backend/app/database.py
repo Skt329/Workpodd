@@ -2,19 +2,19 @@
 
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
 from sqlalchemy.orm import DeclarativeBase
+from sqlalchemy.pool import StaticPool
 
 from app.config import get_settings
 
 settings = get_settings()
 
+# SQLite + aiosqlite requires StaticPool (single connection shared across tasks).
+# pool_size/max_overflow are NOT valid for SQLite — they cause connection locks.
 engine = create_async_engine(
     settings.database_url,
     echo=settings.app_debug,
-    connect_args={"check_same_thread": False},  # SQLite specific
-    pool_pre_ping=True,        # Verify connections before use
-    pool_recycle=3600,         # Recycle connections after 1 hour
-    pool_size=5,               # Maintain 5 connections in pool
-    max_overflow=10,           # Allow up to 10 overflow connections
+    connect_args={"check_same_thread": False},
+    poolclass=StaticPool,
 )
 
 AsyncSessionLocal = async_sessionmaker(

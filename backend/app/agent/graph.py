@@ -96,6 +96,8 @@ async def run_agent(
         event_callback: Async callback for admin event streaming
         token_callback: Async callback for streaming response tokens to the customer
     """
+    import asyncio
+
     graph = get_session_graph(customer_id)
     events = []
     step_index = 0
@@ -108,9 +110,11 @@ async def run_agent(
     }
 
     final_response = ""
-    is_streaming_final = False  # True when streaming the last (non-tool) response
+    is_streaming_final = False
 
-    try:
+    async def _run():
+        nonlocal final_response, is_streaming_final, step_index
+
         async for event in graph.astream_events(initial_state, version="v2"):
             kind = event.get("event", "")
             data = event.get("data", {})
@@ -130,10 +134,8 @@ async def run_agent(
                     await event_callback(ev)
 
             elif kind == "on_chat_model_stream":
-                # Token-by-token streaming
                 chunk = data.get("chunk")
                 if chunk and hasattr(chunk, "content") and chunk.content:
-                    # Only stream if this is NOT a tool call response
                     if not (hasattr(chunk, "tool_calls") and chunk.tool_calls):
                         is_streaming_final = True
                         if token_callback:
@@ -191,7 +193,24 @@ async def run_agent(
                 if event_callback:
                     await event_callback(ev)
 
+    try:
+        # Timeout after 90 seconds to prevent indefinite hangs
+        await asyncio.wait_for(_run(), timeout=90.0)
+    except asyncio.TimeoutError:
+        print(f"[ERROR] Agent timed out for customer {customer_id}")
+        ev = {
+            "type": "AGENT_ERROR",
+            "conversation_id": conversation_id,
+            "customer_id": customer_id,
+            "step_index": step_index,
+            "output_data": {"error": "Agent response timed out after 90 seconds"},
+            "timestamp": _now(),
+        }
+        events.append(ev)
+        if event_callback:
+            await event_callback(ev)
     except Exception as e:
+        print(f"[ERROR] Agent error for customer {customer_id}: {e}")
         ev = {
             "type": "AGENT_ERROR",
             "conversation_id": conversation_id,
@@ -204,18 +223,8 @@ async def run_agent(
         if event_callback:
             await event_callback(ev)
 
-    # Fallback if streaming didn't capture the final response
-    if not final_response:
-        try:
-            result = await graph.ainvoke(initial_state)
-            for msg in reversed(result["messages"]):
-                if isinstance(msg, AIMessage) and msg.content and not getattr(msg, "tool_calls", None):
-                    final_response = msg.content
-                    break
-        except Exception:
-            pass
-
     return {
         "response": final_response or "I apologize, but I encountered a technical issue. Please try again.",
         "events": events,
     }
+
