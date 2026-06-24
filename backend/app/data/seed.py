@@ -195,24 +195,19 @@ async def seed_database(session: AsyncSession) -> None:
 
     print("[SEED] Seeding database...")
 
-    # Seed products first
-    for product in PRODUCTS:
-        session.add(product)
-    await session.flush()
-
-    # Seed customers, orders, refunds
     customers, orders, refunds = _build_customers_and_orders()
 
-    for customer in customers:
-        session.add(customer)
+    # Batch insert all entities — single flush per entity type
+    session.add_all(PRODUCTS)
     await session.flush()
 
-    for order in orders:
-        session.add(order)
+    session.add_all(customers)
     await session.flush()
 
-    for refund in refunds:
-        session.add(refund)
+    session.add_all(orders)
+    await session.flush()
+
+    session.add_all(refunds)
 
     await session.commit()
     print(f"[SEED] Seeded {len(customers)} customers, {len(PRODUCTS)} products, {len(orders)} orders, {len(refunds)} refunds")

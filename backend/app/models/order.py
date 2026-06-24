@@ -22,7 +22,7 @@ class Order(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     order_number: Mapped[str] = mapped_column(String(20), unique=True, nullable=False)
     customer_id: Mapped[str] = mapped_column(
-        String(36), ForeignKey("customers.id"), nullable=False
+        String(36), ForeignKey("customers.id"), nullable=False, index=True
     )
     product_id: Mapped[str] = mapped_column(
         String(36), ForeignKey("products.id"), nullable=False

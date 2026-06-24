@@ -61,6 +61,12 @@ export async function getConversations(): Promise<ConversationInfo[]> {
   return fetchJSON<ConversationInfo[]>("/conversations");
 }
 
+export async function getCustomerMessages(
+  customerId: string
+): Promise<{ messages: { id: string; role: string; content: string; timestamp: string }[]; conversation_id: string | null }> {
+  return fetchJSON(`/conversations/${customerId}/messages`);
+}
+
 // ── WebSocket URLs ──────────────────────────────────────────────────────────
 
 const WS_BASE = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000")

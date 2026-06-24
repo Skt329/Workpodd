@@ -117,6 +117,8 @@ export type EventType =
   | "LLM_THINKING"
   | "DECISION"
   | "ERROR"
+  | "AGENT_ERROR"
+  | "SECURITY_WARNING"
   | "RETRY"
   | "CONVERSATION_START"
   | "CONVERSATION_END"
@@ -147,6 +149,7 @@ export interface ChatMessageOut {
   type:
     | "agent_message"
     | "agent_typing"
+    | "agent_token"
     | "refund_status"
     | "error"
     | "conversation_reset";

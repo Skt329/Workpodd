@@ -1,6 +1,6 @@
 """CRM Service — customer and order data access."""
 
-from sqlalchemy import select
+from sqlalchemy import select, or_
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -16,32 +16,23 @@ class CRMService:
         self._session = session
 
     async def lookup_customer(self, identifier: str) -> dict | None:
-        """Look up customer by ID, email, or name (case-insensitive)."""
-        # Try by ID first
+        """Look up customer by ID, email, or name (case-insensitive).
+
+        Uses a single OR query instead of 3 sequential queries.
+        """
         result = await self._session.execute(
             select(Customer)
             .options(selectinload(Customer.orders), selectinload(Customer.refunds))
-            .where(Customer.id == identifier)
+            .where(
+                or_(
+                    Customer.id == identifier,
+                    Customer.email == identifier.lower(),
+                    Customer.name.ilike(f"%{identifier}%"),
+                )
+            )
+            .limit(1)
         )
         customer = result.scalar_one_or_none()
-
-        # Try by email
-        if not customer:
-            result = await self._session.execute(
-                select(Customer)
-                .options(selectinload(Customer.orders), selectinload(Customer.refunds))
-                .where(Customer.email == identifier.lower())
-            )
-            customer = result.scalar_one_or_none()
-
-        # Try by name (partial match)
-        if not customer:
-            result = await self._session.execute(
-                select(Customer)
-                .options(selectinload(Customer.orders), selectinload(Customer.refunds))
-                .where(Customer.name.ilike(f"%{identifier}%"))
-            )
-            customer = result.scalars().first()
 
         if not customer:
             return None
@@ -67,20 +58,22 @@ class CRMService:
         return [self._customer_to_dict(c) for c in customers]
 
     async def get_order_details(self, order_id: str) -> dict | None:
-        """Get order details by order ID or order number."""
-        # Try by ID
+        """Get order details by order ID or order number.
+
+        Uses a single OR query instead of 2 sequential queries.
+        """
         result = await self._session.execute(
-            select(Order).options(selectinload(Order.product)).where(Order.id == order_id)
+            select(Order)
+            .options(selectinload(Order.product))
+            .where(
+                or_(
+                    Order.id == order_id,
+                    Order.order_number == order_id,
+                )
+            )
+            .limit(1)
         )
         order = result.scalar_one_or_none()
-
-        # Try by order number
-        if not order:
-            result = await self._session.execute(
-                select(Order).options(selectinload(Order.product)).where(Order.order_number == order_id)
-            )
-            order = result.scalar_one_or_none()
-
         return self._order_to_dict(order) if order else None
 
     async def get_customer_orders(self, customer_id: str) -> list[dict]:

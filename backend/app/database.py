@@ -11,6 +11,10 @@ engine = create_async_engine(
     settings.database_url,
     echo=settings.app_debug,
     connect_args={"check_same_thread": False},  # SQLite specific
+    pool_pre_ping=True,        # Verify connections before use
+    pool_recycle=3600,         # Recycle connections after 1 hour
+    pool_size=5,               # Maintain 5 connections in pool
+    max_overflow=10,           # Allow up to 10 overflow connections
 )
 
 AsyncSessionLocal = async_sessionmaker(

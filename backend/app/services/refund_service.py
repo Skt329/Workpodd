@@ -3,7 +3,7 @@
 import uuid
 import json
 from datetime import datetime
-from sqlalchemy import select, func
+from sqlalchemy import select, func, case
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.refund import Refund, RefundStatus
@@ -49,27 +49,41 @@ class RefundService:
         }
 
     async def get_stats(self) -> dict:
-        """Get aggregate refund statistics."""
-        result = await self._session.execute(select(Refund))
-        refunds = result.scalars().all()
+        """Get aggregate refund statistics using SQL aggregates (not Python loops)."""
+        result = await self._session.execute(
+            select(
+                func.count(Refund.id).label("total"),
+                func.count(case((Refund.status == RefundStatus.APPROVED, 1))).label("approved"),
+                func.count(case((Refund.status == RefundStatus.DENIED, 1))).label("denied"),
+                func.count(case((Refund.status == RefundStatus.PARTIAL, 1))).label("partial"),
+                func.count(case((Refund.status == RefundStatus.ESCALATED, 1))).label("escalated"),
+                func.count(case((Refund.status == RefundStatus.PENDING, 1))).label("pending"),
+                func.coalesce(
+                    func.sum(
+                        case(
+                            (Refund.status.in_([RefundStatus.APPROVED, RefundStatus.PARTIAL]), Refund.amount),
+                            else_=0.0,
+                        )
+                    ),
+                    0.0,
+                ).label("total_amount"),
+            )
+        )
+        row = result.one()
 
-        total = len(refunds)
-        approved = sum(1 for r in refunds if r.status == RefundStatus.APPROVED)
-        denied = sum(1 for r in refunds if r.status == RefundStatus.DENIED)
-        partial = sum(1 for r in refunds if r.status == RefundStatus.PARTIAL)
-        escalated = sum(1 for r in refunds if r.status == RefundStatus.ESCALATED)
-        pending = sum(1 for r in refunds if r.status == RefundStatus.PENDING)
-        total_amount = sum(r.amount for r in refunds if r.status in (RefundStatus.APPROVED, RefundStatus.PARTIAL))
+        total = row.total
+        approved = row.approved
+        denied = row.denied
 
         return {
             "total_requests": total,
             "approved_count": approved,
             "denied_count": denied,
-            "partial_count": partial,
-            "escalated_count": escalated,
-            "pending_count": pending,
-            "total_refunded_amount": round(total_amount, 2),
-            "approval_rate": round((approved + partial) / total * 100, 1) if total > 0 else 0.0,
+            "partial_count": row.partial,
+            "escalated_count": row.escalated,
+            "pending_count": row.pending,
+            "total_refunded_amount": round(float(row.total_amount), 2),
+            "approval_rate": round((approved + row.partial) / total * 100, 1) if total > 0 else 0.0,
             "denial_rate": round(denied / total * 100, 1) if total > 0 else 0.0,
         }
 

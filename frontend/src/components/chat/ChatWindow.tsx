@@ -31,6 +31,7 @@ export function ChatWindow({ customer }: Props) {
     isAgentTyping,
     isConnected,
     refundStatus,
+    streamingMessage,
     sendChatMessage,
     resetConversation,
   } = useChat(customer.id);
@@ -129,8 +130,20 @@ export function ChatWindow({ customer }: Props) {
           <MessageBubble key={msg.id} message={msg} />
         ))}
 
+        {/* Streaming response (word-by-word) */}
+        {streamingMessage && (
+          <div className="flex items-start gap-3 animate-slide-up">
+            <div className="rounded-lg bg-primary/20 p-1.5 mt-1">
+              <Bot className="h-4 w-4 text-primary" />
+            </div>
+            <div className="glass rounded-2xl rounded-tl-sm px-4 py-3 max-w-[80%]">
+              <p className="text-sm whitespace-pre-wrap">{streamingMessage}<span className="inline-block w-1.5 h-4 bg-primary/60 animate-pulse ml-0.5 align-text-bottom" /></p>
+            </div>
+          </div>
+        )}
+
         {/* Typing indicator */}
-        {isAgentTyping && (
+        {isAgentTyping && !streamingMessage && (
           <div className="flex items-start gap-3 animate-slide-up">
             <div className="rounded-lg bg-primary/20 p-1.5 mt-1">
               <Bot className="h-4 w-4 text-primary" />

@@ -21,7 +21,7 @@ class Refund(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     customer_id: Mapped[str] = mapped_column(
-        String(36), ForeignKey("customers.id"), nullable=False
+        String(36), ForeignKey("customers.id"), nullable=False, index=True
     )
     order_id: Mapped[str] = mapped_column(
         String(36), ForeignKey("orders.id"), nullable=False

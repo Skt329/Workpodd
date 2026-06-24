@@ -16,6 +16,7 @@ import {
   ChevronDown,
   ChevronRight,
   User,
+  ShieldAlert,
 } from "lucide-react";
 import { useState } from "react";
 import type { AgentEvent, EventType } from "@/lib/types";
@@ -57,6 +58,18 @@ const EVENT_CONFIG: Record<
     color: "text-red-400",
     label: "Error",
     bgColor: "bg-red-500/15 border-red-500/30",
+  },
+  AGENT_ERROR: {
+    icon: XCircle,
+    color: "text-red-400",
+    label: "Agent Error",
+    bgColor: "bg-red-500/15 border-red-500/30",
+  },
+  SECURITY_WARNING: {
+    icon: ShieldAlert,
+    color: "text-orange-400",
+    label: "Security Warning",
+    bgColor: "bg-orange-500/20 border-orange-500/40",
   },
   RETRY: {
     icon: AlertTriangle,
@@ -147,6 +160,11 @@ function TraceNode({ event }: { event: AgentEvent }) {
           {event.input_data?.message && (
             <p className="text-xs text-muted-foreground mt-1 truncate">
               {String(event.input_data.message)}
+            </p>
+          )}
+          {event.input_data?.violations && (
+            <p className="text-xs text-orange-400 mt-1 truncate font-medium">
+              Prompt injection attempt detected
             </p>
           )}
           {event.output_data?.response && (

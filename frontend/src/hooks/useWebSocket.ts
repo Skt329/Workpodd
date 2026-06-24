@@ -1,5 +1,6 @@
 /**
  * Reusable WebSocket hook with auto-reconnection.
+ * Uses refs for callbacks to prevent reconnection on handler changes.
  */
 
 "use client";
@@ -27,8 +28,18 @@ export function useWebSocket({
   const reconnectCountRef = useRef(0);
   const [isConnected, setIsConnected] = useState(false);
 
+  // Store callbacks in refs so they don't cause reconnections
+  const onMessageRef = useRef(onMessage);
+  const onOpenRef = useRef(onOpen);
+  const onCloseRef = useRef(onClose);
+
+  useEffect(() => { onMessageRef.current = onMessage; }, [onMessage]);
+  useEffect(() => { onOpenRef.current = onOpen; }, [onOpen]);
+  useEffect(() => { onCloseRef.current = onClose; }, [onClose]);
+
   const connect = useCallback(() => {
-    if (wsRef.current?.readyState === WebSocket.OPEN) return;
+    if (!url) return;
+    if (wsRef.current?.readyState === WebSocket.OPEN || wsRef.current?.readyState === WebSocket.CONNECTING) return;
 
     const ws = new WebSocket(url);
     wsRef.current = ws;
@@ -36,13 +47,13 @@ export function useWebSocket({
     ws.onopen = () => {
       setIsConnected(true);
       reconnectCountRef.current = 0;
-      onOpen?.();
+      onOpenRef.current?.();
     };
 
     ws.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data);
-        onMessage?.(data);
+        onMessageRef.current?.(data);
       } catch {
         console.error("Failed to parse WebSocket message:", event.data);
       }
@@ -50,7 +61,8 @@ export function useWebSocket({
 
     ws.onclose = () => {
       setIsConnected(false);
-      onClose?.();
+      wsRef.current = null;
+      onCloseRef.current?.();
 
       // Auto-reconnect
       if (reconnectCountRef.current < maxReconnectAttempts) {
@@ -62,7 +74,7 @@ export function useWebSocket({
     ws.onerror = () => {
       ws.close();
     };
-  }, [url, onMessage, onOpen, onClose, reconnectDelay, maxReconnectAttempts]);
+  }, [url, reconnectDelay, maxReconnectAttempts]);
 
   const sendMessage = useCallback(
     (data: Record<string, unknown>) => {
@@ -74,8 +86,9 @@ export function useWebSocket({
   );
 
   const disconnect = useCallback(() => {
-    reconnectCountRef.current = maxReconnectAttempts; // Prevent reconnect
+    reconnectCountRef.current = maxReconnectAttempts;
     wsRef.current?.close();
+    wsRef.current = null;
   }, [maxReconnectAttempts]);
 
   useEffect(() => {
